@@ -41,7 +41,7 @@ function run(cmd, args, { cwd = ROOT, env, allowFail = false, input } = {}) {
   const r = spawnSync(cmd, args, { cwd, env, input, encoding: 'utf8' });
   if (r.error) throw new Error(`${cmd}: ${r.error.message}`);
   if (r.status !== 0 && !allowFail) throw new Error(`${cmd} ${args.join(' ')}\n${(r.stderr || r.stdout).trim()}`);
-  return { ok: r.status === 0, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+  return { ok: r.status === 0, out: (r.stdout || '').trim(), raw: r.stdout || '', err: (r.stderr || '').trim() };
 }
 const git = (args, opts) => run('git', args, opts);
 
@@ -63,17 +63,24 @@ function otsCommand() {
     }
     env.PATH = shim + path.delimiter + process.env.PATH;
   }
-  return (args) => run(exe || 'ots', args, { env });
+  return (args, opts = {}) => run(exe || 'ots', args, { env, ...opts });
 }
 
 // ---- checks -------------------------------------------------------------------
 
 function repoState() {
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']).out;
-  const origin = git(['remote', 'get-url', 'origin'], { allowFail: true });
+  const origin = git(['config', '--get', 'remote.origin.url'], { allowFail: true });
   const signing = git(['config', '--get', 'gpg.format'], { allowFail: true }).out === 'ssh'
     && !!git(['config', '--get', 'user.signingkey'], { allowFail: true }).out;
-  const dirty = git(['status', '--porcelain', '--untracked-files=all']).out.split('\n').filter(Boolean).map((l) => l.slice(3).replace(/^"|"$/g, ''));
+  // -z: one NUL-terminated `XY path` entry per file, paths unquoted. A
+  // rename adds its old path as the next entry, which is skipped.
+  const entries = git(['status', '--porcelain', '-z', '--untracked-files=all']).raw.split('\0').filter(Boolean);
+  const dirty = [];
+  for (let i = 0; i < entries.length; i++) {
+    dirty.push(entries[i].slice(3));
+    if (/^[RC]/.test(entries[i])) i++;
+  }
   return { branch, origin: origin.ok ? origin.out : null, signing, dirty };
 }
 
@@ -120,7 +127,10 @@ async function publish(slug, { dryRun, noArchive }) {
   if (problems.length) throw new Error(`Not published:\n  - ${problems.join('\n  - ')}`);
 
   const was = manifestState(dir);
-  if (was.state === 'match' && !repo.dirty.length) {
+  // The proof's own files can change without the post changing (a pending
+  // --confirm rewrites the .ots), so only the post's content counts here.
+  const own = new Set([MANIFEST, PROOF, RECORD].map((f) => `posts/${slug}/${f}`));
+  if (was.state === 'match' && !repo.dirty.some((f) => !own.has(f))) {
     console.log(`posts/${slug} is already published and has not changed since.`);
     return;
   }
@@ -147,9 +157,9 @@ async function publish(slug, { dryRun, noArchive }) {
   console.log('Pushed to origin/main.');
 
   const repoUrl = githubUrl(repo.origin);
-  if (noArchive) { console.log('Archive requests skipped (--no-archive).'); return; }
   const page = `${repoUrl}/blob/${sha}/posts/${slug}/index.md`;
-  for (const line of await Promise.all([
+  if (noArchive) console.log('Archive requests skipped (--no-archive).');
+  else for (const line of await Promise.all([
     archive({ href: `https://archive.softwareheritage.org/api/1/origin/save/git/url/${repoUrl}/`, method: 'POST' }, 'Software Heritage'),
     archive(`https://web.archive.org/save/${page}`, 'Wayback Machine'),
   ])) console.log(line);
@@ -179,7 +189,8 @@ async function confirm() {
   for (const post of listPosts(POSTS)) {
     const proof = path.join(post.dir, PROOF);
     if (!existsSync(proof) || existsSync(path.join(post.dir, RECORD))) continue;
-    ots(['upgrade', proof]);
+    // Exits non-zero while every calendar is still pending; info says which.
+    ots(['upgrade', proof], { allowFail: true });
     rmSync(`${proof}.bak`, { force: true });
     const heights = attestedHeights(ots(['info', proof]).out);
     if (!heights.length) { console.log(`${post.slug}: still waiting for a Bitcoin block.`); continue; }
