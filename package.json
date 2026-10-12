@@ -1,0 +1,9 @@
+{
+  "name": "writing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "publish-post": "node tools/publish.mjs",
+    "test": "node --test tools/*.test.mjs"
+  }
+}

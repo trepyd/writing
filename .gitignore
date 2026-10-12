@@ -1,0 +1,4 @@
+node_modules/
+*.ots.bak
+.DS_Store
+Thumbs.db
