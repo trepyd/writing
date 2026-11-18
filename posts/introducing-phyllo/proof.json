@@ -1,0 +1,9 @@
+{
+  "manifest": "ebdd2e42bb85ec39af7d6cc7a5355b4e710c946d56fa035eedd21fc69afdfea0",
+  "bitcoin": {
+    "height": 976316,
+    "hash": "0000000000000000000111cba5c0bc3d3d1abb4f2374bde2db09d91bfdcdd930",
+    "time": "2026-11-17T20:07:06.000Z"
+  },
+  "source": "Block time as reported by blockstream.info. Verify the proof itself at https://opentimestamps.org."
+}
